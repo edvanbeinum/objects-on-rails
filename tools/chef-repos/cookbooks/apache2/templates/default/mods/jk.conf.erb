@@ -1,0 +1,6 @@
+    JkWorkersFile      <%= node[:apache][:dir] %>/workers.properties
+    JkLogFile          "<%= node[:apache][:dir] %>/mod_jk.lo"
+    JkLogLevel         info
+    JkLogStampFormat   "[%a %b %d %H:%M:%S %Y] "
+    JkRequestLogFormat "%w %V %T"
+    JkOptions          +ForwardKeySize +ForwardURICompat -ForwardDirectories

@@ -1,0 +1,5 @@
+CHANGE MASTER TO MASTER_HOST = '<%= node[:mysql][:master_ip] %>',
+MASTER_USER = 'repl',
+MASTER_PASSWORD = '<%= node[:mysql][:master_repl_password] %>',
+MASTER_LOG_FILE = '<%= node[:mysql][:master_log_file] %>',
+MASTER_LOG_POS = 0;

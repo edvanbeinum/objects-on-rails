@@ -1,0 +1,26 @@
+<VirtualHost *:<%= node[:apache][:listen_ports][0] %>>
+    ServerName <%= node[:jenkins][:apache][:servername] %>
+    ServerAlias <% node[:jenkins][:apache][:server_alias].each do |a| %><%= "#{a}" %> <% end %>
+    ProxyPass         /  http://localhost:8080/
+    ProxyPassReverse  /  http://localhost:8080/
+    ProxyRequests     Off
+    
+    # Local reverse proxy authorization override
+    # Most unix distribution deny proxy by default
+    # (ie /etc/apache2/mods-enabled/proxy.conf in Ubuntu)
+    <Proxy http://localhost:8080/*>
+        Order deny,allow
+        Allow from all
+    </Proxy>
+    
+    # <Directory <%= node[:jenkins][:apache][:docroot] %>>
+    #     Options FollowSymLinks    
+    # 
+    #     <% if node[:apache][:basic_username] %>
+    #         AuthUserFile <%= node[:jenkins][:apache][:docroot] %>/.htpasswd
+    #         AuthType Basic
+    #         AuthName "Protected System"
+    #         Require valid-user
+    #     <% end  %>
+    # </Directory>
+</VirtualHost>

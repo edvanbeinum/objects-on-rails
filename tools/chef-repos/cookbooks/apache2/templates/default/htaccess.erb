@@ -1,0 +1,4 @@
+AuthUserFile <%= node[:apache][:docroot] %>/.htpasswd
+AuthType Basic
+AuthName "Protected System"
+Require valid-user

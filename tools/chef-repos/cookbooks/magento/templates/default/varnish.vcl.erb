@@ -1,0 +1,159 @@
+# Setup a cluster of backend servers
+backend www1 {
+  .host = "localhost";
+  .port = "8080";
+}
+# Create a backend directory to implement loadbalancing across
+# the cluster of servers
+director backend_director random {
+    .retries = 5;
+    { .backend = www1; .weight = 1; }
+}
+# Limit the perge request to localhost
+acl purge {
+  "127.0.0.1";
+}
+
+sub vcl_recv {
+  set req.backend = backend_director;
+  
+  set req.http.Surrogate-Capability = "magento=ESI/1.0";
+
+  if (req.request == "PURGE") {
+    if (!client.ip ~ purge) {
+      error 405 "Not allowed.";
+    }
+    if (req.url ~ "varnish/index/purgeall/key/#Fj1nzljh") {
+      purge( ".*" );
+    }
+  }
+
+  # Do not cache none standard verbs
+  if (req.request != "GET" &&
+    req.request != "HEAD" &&
+    req.request != "PUT" &&
+    req.request != "POST" &&
+    req.request != "TRACE" &&
+    req.request != "OPTIONS" &&
+    req.request != "DELETE") {
+    return (pipe);
+  }
+
+  # Do not cache POST requests
+  if (req.request == "POST") {
+    return (pipe);
+  }
+
+  # We should not cache any page for Magento backend
+  if (req.request == "GET" && 
+      (
+        req.url ~ "^/<%= node[:magento][:app][:admin_frontname] %>" || 
+        req.url ~ "^/index.php/<%= node[:magento][:app][:admin_frontname] %>"
+      ))
+  {
+    return (pass);
+  }
+
+  # We should not cache any page for checkout and customer modules
+  # TODO With the completed CSI this should no longer be the case
+  if (req.request == "GET" && (req.url ~ "^/checkout" || req.url ~ "^/customer"))
+  {
+    return (pass);
+  }
+
+  # Do not cache till session end
+  if (req.http.cookie ~ "nocache_stable") {
+    return (pass);
+  }
+
+  # Unique identifier which tells Varnish to use cache or not
+  if (req.http.cookie ~ "nocache") {
+    return (pass);
+  }
+
+  if (req.request == "GET" && (req.url ~ "\.(png|jpg|jpeg|gif)$" || req.url ~ "print.css")) {
+    return(lookup);
+  }
+
+  # Even though there are few possible values for Accept-Encoding, Varnish treats
+  # them literally rather than semantically, so even a small difference which makes
+  # no difference to the backend can reduce cache efficiency by making Varnish cache
+  # too many different versions of an object.
+  # http://varnish.projects.linpro.no/wiki/FAQ/Compression
+  if (req.http.Accept-Encoding) {
+    if (req.url ~ "\.(jpg|png|gif|gz|tgz|bz2|tbz|mp3|ogg)$") {
+      # No point in compressing these
+      remove req.http.Accept-Encoding;
+    } elsif (req.http.Accept-Encoding ~ "gzip") {
+      set req.http.Accept-Encoding = "gzip";
+    } elsif (req.http.Accept-Encoding ~ "deflate") {
+      set req.http.Accept-Encoding = "deflate";
+    } else {
+      # unkown algorithm
+      remove req.http.Accept-Encoding;
+    }
+  }
+
+  return (lookup);
+}
+
+sub vcl_hash {
+    ### these 2 entries are the default ones used for vcl. Below we add our own.
+    set req.hash += req.url;
+    set req.hash += req.http.host;
+    ### Also add cookie
+    set req.hash += req.http.cookie;  
+
+    ### regsub replaces only the bit in your match criteria with whatever you
+    ### ask it too. In this case, we need to remove *EVERYTHING* else from the
+    ### cookie, except the UUID, hence the full string match    
+    ### This is using the UUID, which will always stay the same. If you wish
+    ### to cache based on the session, you could use "myapp_session" instead.
+    ### The regex is PCRE, so it works only in trunk. If you wish to use it
+    ### with Varnish 2.0, remove the '?' non-greedy operator and be aware it
+    ### changes the behavior of the regex.
+    if( req.http.Cookie ~ "frontend" ) {
+        set req.http.X-Varnish-Hashed-On = 
+            regsub( req.http.Cookie, "^.*?frontend=([^;]*);*.*$", "\1" );
+    }
+
+    ### if the esi request is UUID specific, add the UUID to the hashing
+    ### The only requirement on the application is now that UUID specific 
+    ### content mentions the string UUID in it.    
+    if( req.url ~ "^/varnish/esi/.*UUID" && req.http.X-Varnish-Hashed-On ) { 
+        set req.hash += req.http.X-Varnish-Hashed-On;
+    }
+    
+    return (hash);
+}
+
+sub vcl_fetch {
+    if (beresp.http.Surrogate-Control ~ "ESI/1.0") { 
+        # unset beresp.http.Surrogate-Control;   
+        esi;
+    }
+    # strip the cookie before the image is inserted into cache.
+    if (req.url ~ "^[^?]*\.(css|js|htc|xml|txt|swf|flv|pdf|gif|jpe?g|png|ico)$") {
+        # Force caching
+		remove beresp.http.Pragma;
+		remove beresp.http.Set-Cookie;
+		set beresp.http.Cache-Control = "public";
+    }
+    
+    return (deliver);
+}
+
+sub vcl_deliver {
+  # Set a cache header to allow us to inspect the response
+  # headers during testing
+  if (obj.hits > 0) {
+    set resp.http.X-Cache = "HIT";
+    set resp.http.X-Cache-Hits = obj.hits;
+  } else {
+    set resp.http.X-Cache = "MISS";
+  }
+
+  # if (req.http.Cookie !~ "nocache" && resp.http.Set-Cookie !~ "nocache") {
+  #   unset resp.http.Set-Cookie;
+  # }
+}
